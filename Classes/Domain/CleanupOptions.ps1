@@ -48,10 +48,16 @@ class CleanupOptions {
             return ''
         }
 
+        $trimmed = $Value.Trim()
+
+        if ($trimmed -match '^[A-Za-z]:[\\/]' -or $trimmed.StartsWith('\\')) {
+            return ($trimmed -replace '/', '\').TrimEnd('\')
+        }
+
         try {
-            return [System.IO.Path]::GetFullPath($Value).TrimEnd('\')
+            return [System.IO.Path]::GetFullPath($trimmed).TrimEnd('\')
         } catch {
-            return $Value.Trim().TrimEnd('\')
+            return $trimmed.TrimEnd('\')
         }
     }
 

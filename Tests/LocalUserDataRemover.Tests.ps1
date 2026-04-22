@@ -1,7 +1,53 @@
 $modulePath = Join-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '..') -ChildPath 'LocalUserDataRemover.psd1'
 Import-Module $modulePath -Force
 
+if (-not (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) {
+    function global:Get-CimInstance {
+        [CmdletBinding()]
+        param(
+            [Parameter(ValueFromRemainingArguments = $true)]
+            [object[]]$RemainingArguments
+        )
+    }
+}
+
 InModuleScope LocalUserDataRemover {
+    BeforeAll {
+        function New-LocalUserDataRemoverProfileStub {
+            param(
+                [Parameter(Mandatory)]
+                [string]$Sid,
+
+                [Parameter(Mandatory)]
+                [string]$LocalPath,
+
+                [AllowNull()]
+                [string]$LastUseTime = $null,
+
+                [bool]$Loaded = $false,
+
+                [bool]$Special = $false,
+
+                [long]$Size = 0
+            )
+
+            $profile = [pscustomobject]@{
+                SID         = $Sid
+                LocalPath   = $LocalPath
+                LastUseTime = $LastUseTime
+                Loaded      = $Loaded
+                Special     = $Special
+                Size        = $Size
+            }
+
+            $profile | Add-Member -MemberType ScriptMethod -Name Delete -Value {
+                [pscustomobject]@{ ReturnValue = 0 }
+            } -Force
+
+            return $profile
+        }
+    }
+
     Describe 'CleanupOptions' {
         It 'normalizes text and paths consistently' {
             [CleanupOptions]::NormalizeText('  TeSt  ') | Should -Be 'test'
@@ -65,6 +111,11 @@ InModuleScope LocalUserDataRemover {
     }
 
     Describe 'Helper functions' {
+        It 'returns empty path values as-is' {
+            Get-LocalUserDataRemoverNormalizedPath -Path '' | Should -Be ''
+            Test-LocalUserDataRemoverPathUnderRoot -Path '' -Root 'C:\Users' | Should -BeFalse
+        }
+
         It 'detects paths under the configured root' {
             Test-LocalUserDataRemoverPathUnderRoot -Path 'C:\Users\TestUser' -Root 'C:\Users' | Should -BeTrue
             Test-LocalUserDataRemoverPathUnderRoot -Path 'C:\Users' -Root 'C:\Users' | Should -BeTrue
@@ -80,6 +131,7 @@ InModuleScope LocalUserDataRemover {
         It 'resolves account names from a local path when sid translation fails' {
             Resolve-LocalUserDataRemoverAccountName -Sid 'S-1-5-21-invalid' -LocalPath 'C:\Users\TestUser' | Should -Be 'TestUser'
             Resolve-LocalUserDataRemoverAccountName -Sid $null -LocalPath 'C:\Users\TestUser' | Should -Be 'TestUser'
+            Resolve-LocalUserDataRemoverAccountName -Sid $null -LocalPath $null | Should -BeNullOrEmpty
         }
 
         It 'uses the Size property when available and falls back to folder scanning' {
@@ -205,12 +257,61 @@ InModuleScope LocalUserDataRemover {
         }
     }
 
+    Describe 'Get-LocalUserProfileCandidates' {
+        It 'maps CIM profile data and filters profiles outside the target root' {
+            $inside = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-100' -LocalPath 'C:\Users\TestUser' -LastUseTime '20240422093000.000000+000' -Loaded:$true -Size 12345
+            $outside = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-200' -LocalPath 'D:\Profiles\Other' -LastUseTime '20240422093000.000000+000' -Size 999
+
+            Mock -CommandName Get-CimInstance -MockWith { @($inside, $outside) }
+
+            $profiles = Get-LocalUserProfileCandidates -ProfileRoot 'C:\Users'
+
+            $profiles.Count | Should -Be 1
+            $profiles[0].SID | Should -Be 'S-1-5-21-100'
+            $profiles[0].LocalPath | Should -Be 'C:\Users\TestUser'
+            $profiles[0].ProfileFolderName | Should -Be 'TestUser'
+            $profiles[0].UserName | Should -Be 'TestUser'
+            $profiles[0].Loaded | Should -BeTrue
+            $profiles[0].Special | Should -BeFalse
+            $profiles[0].SizeBytes | Should -Be 12345
+            $profiles[0].SourceInstance.SID | Should -Be 'S-1-5-21-100'
+            $profiles[0].LastUseTime | Should -BeOfType ([datetime])
+        }
+
+        It 'falls back to folder size when the cim size is unavailable' {
+            $profile = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-300' -LocalPath 'C:\Users\SizedByFolder' -LastUseTime '20240422093000.000000+000' -Size 0
+
+            Mock -CommandName Get-CimInstance -MockWith { @($profile) }
+            Mock -CommandName Get-LocalUserDataRemoverFolderSizeBytes -MockWith { 67890 }
+
+            $profiles = Get-LocalUserProfileCandidates -ProfileRoot 'C:\Users'
+
+            $profiles.Count | Should -Be 1
+            $profiles[0].SizeBytes | Should -Be 67890
+        }
+    }
+
+    Describe 'Write-LocalUserDataRemoverLog' {
+        It 'writes a formatted line when a log path is configured' {
+            $logPath = Join-Path -Path $TestDrive -ChildPath 'cleanup.log'
+
+            Write-LocalUserDataRemoverLog -Message 'hello world' -LogPath $logPath -Level 'Summary'
+
+            $content = Get-Content -LiteralPath $logPath -Raw
+            $content | Should -Match '\[SUMMARY\]'
+            $content | Should -Match 'hello world'
+        }
+
+        It 'does nothing when no log path is configured' {
+            { Write-LocalUserDataRemoverLog -Message 'ignored' -LogPath $null } | Should -Not -Throw
+        }
+    }
+
     Describe 'Remove-LocalUserProfile' {
         It 'deletes a profile via the supplied CIM instance' {
             $profile = [LocalProfileCandidate]::new()
             $profile.SID = 'S-1-5-21-100'
-            $profile.SourceInstance = [pscustomobject]@{ SID = $profile.SID }
-            $profile.SourceInstance | Add-Member -MemberType ScriptMethod -Name Delete -Value { [pscustomobject]@{ ReturnValue = 0 } } -Force
+            $profile.SourceInstance = New-LocalUserDataRemoverProfileStub -Sid $profile.SID -LocalPath 'C:\Users\TestUser'
 
             Remove-LocalUserProfile -Profile $profile | Should -BeTrue
         }
@@ -220,9 +321,7 @@ InModuleScope LocalUserDataRemover {
             $profile.SID = 'S-1-5-21-200'
 
             Mock -CommandName Get-CimInstance -MockWith {
-                $obj = [pscustomobject]@{ SID = $profile.SID }
-                $obj | Add-Member -MemberType ScriptMethod -Name Delete -Value { [pscustomobject]@{ ReturnValue = 0 } } -Force
-                return $obj
+                New-LocalUserDataRemoverProfileStub -Sid $profile.SID -LocalPath 'C:\Users\ResolvedUser'
             }
 
             Remove-LocalUserProfile -Profile $profile | Should -BeTrue
@@ -237,6 +336,46 @@ InModuleScope LocalUserDataRemover {
     }
 
     Describe 'Start-LocalUserDataRemoval' {
+        It 'deletes eligible profiles and writes the success log path' {
+            $bothProfile = [LocalProfileCandidate]::new()
+            $bothProfile.SID = 'S-1-5-21-300'
+            $bothProfile.UserName = 'BothUser'
+            $bothProfile.ProfileFolderName = 'BothUser'
+            $bothProfile.LocalPath = 'C:\Users\BothUser'
+            $bothProfile.LastUseTime = (Get-Date).AddDays(-120)
+            $bothProfile.SizeBytes = 600MB
+
+            $oldProfile = [LocalProfileCandidate]::new()
+            $oldProfile.SID = 'S-1-5-21-301'
+            $oldProfile.UserName = 'OldUser'
+            $oldProfile.ProfileFolderName = 'OldUser'
+            $oldProfile.LocalPath = 'C:\Users\OldUser'
+            $oldProfile.LastUseTime = (Get-Date).AddDays(-120)
+            $oldProfile.SizeBytes = 10MB
+
+            $safeProfile = [LocalProfileCandidate]::new()
+            $safeProfile.SID = 'S-1-5-21-302'
+            $safeProfile.UserName = 'SafeUser'
+            $safeProfile.ProfileFolderName = 'SafeUser'
+            $safeProfile.LocalPath = 'C:\Users\SafeUser'
+            $safeProfile.LastUseTime = (Get-Date).AddDays(-1)
+            $safeProfile.SizeBytes = 10MB
+            $logPath = Join-Path -Path $TestDrive -ChildPath 'run.log'
+
+            Mock -CommandName Get-LocalUserProfileCandidates -MockWith { @($bothProfile, $oldProfile, $safeProfile) }
+            Mock -CommandName Remove-LocalUserProfile -MockWith { $true }
+
+            $result = Start-LocalUserDataRemoval -ProfileRoot 'C:\Users' -InactivityDays 60 -MaxProfileSizeMB 500 -LogPath $logPath -Confirm:$false
+
+            $result.ScannedCount | Should -Be 3
+            $result.DeletedCount | Should -Be 2
+            $result.SkippedCount | Should -Be 1
+            $result.FailedCount | Should -Be 0
+            $result.DeletedProfiles.Count | Should -Be 2
+            Assert-MockCalled Remove-LocalUserProfile -Times 2
+            (Get-Content -LiteralPath $logPath -Raw) | Should -Match 'Deleted profile'
+        }
+
         It 'scans, deletes, skips and reports totals' {
             $oldProfile = [LocalProfileCandidate]::new()
             $oldProfile.UserName = 'OldUser'

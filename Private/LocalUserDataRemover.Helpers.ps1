@@ -1,7 +1,6 @@
 function Get-LocalUserDataRemoverNormalizedPath {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]
         [string]$Path
     )
 
@@ -9,20 +8,24 @@ function Get-LocalUserDataRemoverNormalizedPath {
         return ''
     }
 
+    $trimmed = $Path.Trim()
+
+    if ($trimmed -match '^[A-Za-z]:[\\/]' -or $trimmed.StartsWith('\\')) {
+        return ($trimmed -replace '/', '\').TrimEnd('\')
+    }
+
     try {
-        return [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+        return [System.IO.Path]::GetFullPath($trimmed).TrimEnd('\')
     } catch {
-        return $Path.Trim().TrimEnd('\')
+        return $trimmed.TrimEnd('\')
     }
 }
 
 function Test-LocalUserDataRemoverPathUnderRoot {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]
         [string]$Path,
 
-        [Parameter(Mandatory)]
         [string]$Root
     )
 
