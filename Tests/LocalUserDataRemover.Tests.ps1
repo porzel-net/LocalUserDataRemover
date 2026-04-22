@@ -210,13 +210,9 @@ InModuleScope LocalUserDataRemover {
             $profile = [LocalProfileCandidate]::new()
             $profile.SID = 'S-1-5-21-100'
             $profile.SourceInstance = [pscustomobject]@{ SID = $profile.SID }
-
-            Mock -CommandName Invoke-CimMethod -MockWith {
-                [pscustomobject]@{ ReturnValue = 0 }
-            }
+            $profile.SourceInstance | Add-Member -MemberType ScriptMethod -Name Delete -Value { [pscustomobject]@{ ReturnValue = 0 } } -Force
 
             Remove-LocalUserProfile -Profile $profile | Should -BeTrue
-            Assert-MockCalled Invoke-CimMethod -Times 1
         }
 
         It 'looks up the CIM instance by sid when needed' {
@@ -224,16 +220,13 @@ InModuleScope LocalUserDataRemover {
             $profile.SID = 'S-1-5-21-200'
 
             Mock -CommandName Get-CimInstance -MockWith {
-                [pscustomobject]@{ SID = $profile.SID }
-            }
-
-            Mock -CommandName Invoke-CimMethod -MockWith {
-                [pscustomobject]@{ ReturnValue = 0 }
+                $obj = [pscustomobject]@{ SID = $profile.SID }
+                $obj | Add-Member -MemberType ScriptMethod -Name Delete -Value { [pscustomobject]@{ ReturnValue = 0 } } -Force
+                return $obj
             }
 
             Remove-LocalUserProfile -Profile $profile | Should -BeTrue
             Assert-MockCalled Get-CimInstance -Times 1
-            Assert-MockCalled Invoke-CimMethod -Times 1
         }
 
         It 'fails when neither sid nor cim instance exists' {

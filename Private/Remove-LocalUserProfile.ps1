@@ -10,30 +10,37 @@ function Remove-LocalUserProfile {
     }
 
     $cimProfile = $Profile.SourceInstance
-    $escapedSid = $null
 
-    if ([string]::IsNullOrWhiteSpace($Profile.SID) -eq $false) {
-        $escapedSid = $Profile.SID.Replace("'", "''")
+    if ($null -ne $cimProfile) {
+        $deleteMethod = $cimProfile.PSObject.Methods['Delete']
+
+        if ($null -ne $deleteMethod) {
+            $deleteResult = $deleteMethod.Invoke()
+        } elseif ($cimProfile -is [Microsoft.Management.Infrastructure.CimInstance]) {
+            $deleteResult = Invoke-CimMethod -InputObject $cimProfile -MethodName Delete -ErrorAction Stop
+        } else {
+            $cimProfile = $null
+        }
     }
 
-    if ($null -eq $cimProfile -or $cimProfile -isnot [Microsoft.Management.Infrastructure.CimInstance]) {
-        if ([string]::IsNullOrWhiteSpace($escapedSid)) {
+    if ($null -eq $cimProfile) {
+        if ([string]::IsNullOrWhiteSpace($Profile.SID)) {
             throw 'Profile must contain a SID when no CIM instance is available.'
         }
 
-        try {
-            $cimProfile = Get-CimInstance -ClassName Win32_UserProfile -Filter "SID='$escapedSid'" -ErrorAction Stop
-        } catch {
-            if ($null -eq $cimProfile) {
-                throw
-            }
-        }
-    }
+        $escapedSid = $Profile.SID.Replace("'", "''")
+        $cimProfile = Get-CimInstance -ClassName Win32_UserProfile -Filter "SID='$escapedSid'" -ErrorAction Stop
 
-    if ($cimProfile -is [Microsoft.Management.Infrastructure.CimInstance]) {
-        $deleteResult = Invoke-CimMethod -InputObject $cimProfile -MethodName Delete -ErrorAction Stop
-    } else {
-        $deleteResult = Invoke-CimMethod -ClassName Win32_UserProfile -Query "SELECT * FROM Win32_UserProfile WHERE SID='$escapedSid'" -MethodName Delete -ErrorAction Stop
+        if ($cimProfile -is [Microsoft.Management.Infrastructure.CimInstance]) {
+            $deleteResult = Invoke-CimMethod -InputObject $cimProfile -MethodName Delete -ErrorAction Stop
+        } else {
+            $deleteMethod = $cimProfile.PSObject.Methods['Delete']
+            if ($null -eq $deleteMethod) {
+                throw 'Retrieved profile does not expose a delete method.'
+            }
+
+            $deleteResult = $deleteMethod.Invoke()
+        }
     }
 
     if ($null -ne $deleteResult -and $null -ne $deleteResult.ReturnValue -and [int]$deleteResult.ReturnValue -ne 0) {
