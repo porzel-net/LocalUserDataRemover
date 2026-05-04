@@ -11,5 +11,6 @@ $moduleRoot = $PSScriptRoot
 . (Join-Path -Path $moduleRoot -ChildPath 'Private/Write-LocalUserDataRemoverLog.ps1')
 
 . (Join-Path -Path $moduleRoot -ChildPath 'Public/Start-LocalUserDataRemoval.ps1')
+. (Join-Path -Path $moduleRoot -ChildPath 'Public/Remove-LocalUserProfileAndAccount.ps1')
 
-Export-ModuleMember -Function 'Start-LocalUserDataRemoval'
+Export-ModuleMember -Function 'Start-LocalUserDataRemoval', 'Remove-LocalUserProfileAndAccount'

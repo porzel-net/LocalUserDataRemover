@@ -9,6 +9,14 @@ function Remove-LocalUserProfile {
         throw 'Profile must contain either a CIM instance or a SID.'
     }
 
+    if ($Profile.Loaded) {
+        throw 'Profile is currently loaded and cannot be deleted.'
+    }
+
+    if ($Profile.Special) {
+        throw 'Special profiles cannot be deleted.'
+    }
+
     $cimProfile = $Profile.SourceInstance
 
     if ($null -ne $cimProfile) {

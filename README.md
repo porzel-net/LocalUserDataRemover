@@ -25,6 +25,8 @@ The cleanup logic intentionally avoids removing profiles that are likely in acti
 
 This means a user can log in again after the profile has been removed. The account itself is not deleted.
 
+For a kiosk, download station, or similar shared machine, there is a separate command that deletes a named local user account and its profile in one step.
+
 ## Project Layout
 
 - [LocalUserDataRemover.psd1](./LocalUserDataRemover.psd1)
@@ -80,6 +82,13 @@ Run with custom thresholds:
 Start-LocalUserDataRemoval -InactivityDays 45 -MaxProfileSizeMB 750
 ```
 
+Delete one named local user and its profile:
+
+```powershell
+Remove-LocalUserProfileAndAccount -LocalUserName 'DownloadStationUser' -WhatIf
+Remove-LocalUserProfileAndAccount -LocalUserName 'DownloadStationUser'
+```
+
 Write a log file:
 
 ```powershell
@@ -108,6 +117,18 @@ If you do not pass `-LogPath`, the module automatically writes to a local `logs`
 - `-LogPath`
   - optional log file path
 
+### `Remove-LocalUserProfileAndAccount`
+
+- `-LocalUserName`
+  - the local Windows account name to remove
+- `-ProfileRoot`
+  - default: `C:\Users`
+  - used to find the profile to delete
+- `-LogPath`
+  - optional log file path
+
+This command resolves the local account with `Get-LocalUser`, deletes the matching `Win32_UserProfile`, and then removes the local account with `Remove-LocalUser`.
+
 ## Output
 
 The command returns a structured result object with:
@@ -134,5 +155,6 @@ Run them from the project folder with your PowerShell 5.1 environment and Pester
 
 - This script only removes local profile data.
 - It does not remove the AD account.
+- It does not delete a local Windows account unless you call `Remove-LocalUserProfileAndAccount`.
 - If the user logs in again later, Windows can recreate the profile.
 - Always use `-WhatIf` first on a real machine.

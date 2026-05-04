@@ -2,11 +2,22 @@ function Get-LocalUserProfileCandidates {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [string]$ProfileRoot
+        [string]$ProfileRoot,
+
+        [string]$Sid
     )
 
     $items = New-Object System.Collections.ArrayList
-    $profileInstances = Get-CimInstance -ClassName Win32_UserProfile -ErrorAction Stop
+
+    if ([string]::IsNullOrWhiteSpace($Sid)) {
+        $profileInstances = Get-CimInstance -ClassName Win32_UserProfile -ErrorAction Stop
+    } else {
+        $escapedSid = $Sid.Replace("'", "''")
+        $profileInstances = @(Get-CimInstance -ClassName Win32_UserProfile -Filter "SID='$escapedSid'" -ErrorAction Stop)
+        if ($profileInstances.Count -eq 1 -and $null -eq $profileInstances[0]) {
+            $profileInstances = @()
+        }
+    }
 
     foreach ($profileInstance in $profileInstances) {
         $localPath = [string]$profileInstance.LocalPath

@@ -11,6 +11,25 @@ if (-not (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) {
     }
 }
 
+if (-not (Get-Command Get-LocalUser -ErrorAction SilentlyContinue)) {
+    function global:Get-LocalUser {
+        [CmdletBinding()]
+        param(
+            [string]$Name
+        )
+    }
+}
+
+if (-not (Get-Command Remove-LocalUser -ErrorAction SilentlyContinue)) {
+    function global:Remove-LocalUser {
+        [CmdletBinding()]
+        param(
+            [string]$Name,
+            [object]$SID
+        )
+    }
+}
+
 InModuleScope LocalUserDataRemover {
     BeforeAll {
         function New-LocalUserDataRemoverProfileStub {
@@ -301,6 +320,21 @@ InModuleScope LocalUserDataRemover {
             $profiles.Count | Should -Be 1
             $profiles[0].SizeBytes | Should -Be 67890
         }
+
+        It 'can filter candidates by sid for targeted deletion' {
+            $match = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-400' -LocalPath 'C:\Users\Match' -LastUseTime '20240422093000.000000+000' -Size 123
+            $other = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-401' -LocalPath 'C:\Users\Other' -LastUseTime '20240422093000.000000+000' -Size 456
+
+            Mock -CommandName Get-CimInstance -ParameterFilter { $Filter -eq "SID='S-1-5-21-400'" } -MockWith { @($match) }
+            Mock -CommandName Get-CimInstance -MockWith { @($match, $other) }
+
+            $profiles = Get-LocalUserProfileCandidates -ProfileRoot 'C:\Users' -Sid 'S-1-5-21-400'
+
+            $profiles.Count | Should -Be 1
+            $profiles[0].SID | Should -Be 'S-1-5-21-400'
+            $profiles[0].LocalPath | Should -Be 'C:\Users\Match'
+            Assert-MockCalled Get-CimInstance -ParameterFilter { $Filter -eq "SID='S-1-5-21-400'" } -Times 1
+        }
     }
 
     Describe 'Write-LocalUserDataRemoverLog' {
@@ -358,6 +392,176 @@ InModuleScope LocalUserDataRemover {
             $profile = [LocalProfileCandidate]::new()
 
             { Remove-LocalUserProfile -Profile $profile } | Should -Throw
+        }
+
+        It 'rejects loaded profiles' {
+            $profile = [LocalProfileCandidate]::new()
+            $profile.SID = 'S-1-5-21-101'
+            $profile.Loaded = $true
+
+            { Remove-LocalUserProfile -Profile $profile } | Should -Throw
+        }
+
+        It 'rejects special profiles' {
+            $profile = [LocalProfileCandidate]::new()
+            $profile.SID = 'S-1-5-21-102'
+            $profile.Special = $true
+
+            { Remove-LocalUserProfile -Profile $profile } | Should -Throw
+        }
+
+        It 'fails when the profile delete method returns a nonzero code' {
+            $profile = [LocalProfileCandidate]::new()
+            $profile.SID = 'S-1-5-21-103'
+            $profile.SourceInstance = [pscustomobject]@{
+                SID       = 'S-1-5-21-103'
+                LocalPath = 'C:\Users\BrokenProfile'
+            }
+
+            $profile.SourceInstance | Add-Member -MemberType ScriptMethod -Name Delete -Value {
+                [pscustomobject]@{ ReturnValue = 5 }
+            } -Force
+
+            { Remove-LocalUserProfile -Profile $profile } | Should -Throw
+        }
+    }
+
+    Describe 'Remove-LocalUserProfileAndAccount' {
+        It 'deletes the matching profile and local account' {
+            $profile = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-500' -LocalPath 'C:\Users\DownloadStationUser' -LastUseTime '20240422093000.000000+000' -Size 12345
+
+            Mock -CommandName Get-LocalUser -MockWith {
+                [pscustomobject]@{
+                    Name = 'DownloadStationUser'
+                    SID  = 'S-1-5-21-500'
+                }
+            }
+
+            Mock -CommandName Get-LocalUserProfileCandidates -MockWith { @($profile) }
+            Mock -CommandName Remove-LocalUserProfile -MockWith { $true }
+            Mock -CommandName Remove-LocalUser -MockWith { $true }
+
+            $result = Remove-LocalUserProfileAndAccount -LocalUserName 'DownloadStationUser' -Confirm:$false
+
+            $result.LocalUserName | Should -Be 'DownloadStationUser'
+            $result.ProfileDeleted | Should -BeTrue
+            $result.AccountDeleted | Should -BeTrue
+            Assert-MockCalled Remove-LocalUserProfile -Times 1
+            Assert-MockCalled Remove-LocalUser -Times 1
+        }
+
+        It 'removes the account when no profile exists' {
+            Mock -CommandName Get-LocalUser -MockWith {
+                [pscustomobject]@{
+                    Name = 'TempUser'
+                    SID  = 'S-1-5-21-501'
+                }
+            }
+
+            Mock -CommandName Get-LocalUserProfileCandidates -MockWith { @() }
+            Mock -CommandName Remove-LocalUser -MockWith { $true }
+
+            $result = Remove-LocalUserProfileAndAccount -LocalUserName 'TempUser' -Confirm:$false
+
+            $result.ProfileDeleted | Should -BeFalse
+            $result.AccountDeleted | Should -BeTrue
+            Assert-MockCalled Remove-LocalUserProfile -Times 0
+            Assert-MockCalled Remove-LocalUser -Times 1
+        }
+
+        It 'throws when local accounts cmdlets are unavailable' {
+            Mock -CommandName Get-Command -ParameterFilter { $Name -in @('Get-LocalUser', 'Remove-LocalUser') } -MockWith { $null }
+
+            { Remove-LocalUserProfileAndAccount -LocalUserName 'MissingCmdlets' -Confirm:$false } | Should -Throw
+        }
+
+        It 'fails when the local user cannot be resolved' {
+            Mock -CommandName Get-LocalUser -MockWith { throw 'not found' }
+            Mock -CommandName Remove-LocalUser -MockWith { $true }
+
+            { Remove-LocalUserProfileAndAccount -LocalUserName 'MissingUser' -Confirm:$false } | Should -Throw
+
+            Assert-MockCalled Remove-LocalUser -Times 0
+        }
+
+        It 'does not delete the account when the profile is loaded' {
+            $profile = [LocalProfileCandidate]::new()
+            $profile.SID = 'S-1-5-21-503'
+            $profile.LocalPath = 'C:\Users\LoadedUser'
+            $profile.Loaded = $true
+
+            Mock -CommandName Get-LocalUser -MockWith {
+                [pscustomobject]@{
+                    Name = 'LoadedUser'
+                    SID  = 'S-1-5-21-503'
+                }
+            }
+
+            Mock -CommandName Get-LocalUserProfileCandidates -MockWith { @($profile) }
+            Mock -CommandName Remove-LocalUser -MockWith { $true }
+
+            { Remove-LocalUserProfileAndAccount -LocalUserName 'LoadedUser' -Confirm:$false } | Should -Throw
+
+            Assert-MockCalled Remove-LocalUser -Times 0
+        }
+
+        It 'does not delete the account when the profile removal fails' {
+            $profile = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-504' -LocalPath 'C:\Users\BrokenUser'
+
+            Mock -CommandName Get-LocalUser -MockWith {
+                [pscustomobject]@{
+                    Name = 'BrokenUser'
+                    SID  = 'S-1-5-21-504'
+                }
+            }
+
+            Mock -CommandName Get-LocalUserProfileCandidates -MockWith { @($profile) }
+            Mock -CommandName Remove-LocalUserProfile -MockWith { throw 'profile delete failed' }
+            Mock -CommandName Remove-LocalUser -MockWith { $true }
+
+            { Remove-LocalUserProfileAndAccount -LocalUserName 'BrokenUser' -Confirm:$false } | Should -Throw
+
+            Assert-MockCalled Remove-LocalUser -Times 0
+        }
+
+        It 'reports no changes when WhatIf is used' {
+            Mock -CommandName Get-LocalUser -MockWith {
+                [pscustomobject]@{
+                    Name = 'WhatIfUser'
+                    SID  = 'S-1-5-21-502'
+                }
+            }
+
+            Mock -CommandName Get-LocalUserProfileCandidates -MockWith { @() }
+            Mock -CommandName Remove-LocalUser -MockWith { $true }
+
+            $result = Remove-LocalUserProfileAndAccount -LocalUserName 'WhatIfUser' -WhatIf
+
+            $result.ProfileDeleted | Should -BeFalse
+            $result.AccountDeleted | Should -BeFalse
+            Assert-MockCalled Remove-LocalUser -Times 0
+        }
+
+        It 'does not delete anything when WhatIf is used and a profile exists' {
+            $profile = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-505' -LocalPath 'C:\Users\WhatIfProfile'
+
+            Mock -CommandName Get-LocalUser -MockWith {
+                [pscustomobject]@{
+                    Name = 'WhatIfProfile'
+                    SID  = 'S-1-5-21-505'
+                }
+            }
+
+            Mock -CommandName Get-LocalUserProfileCandidates -MockWith { @($profile) }
+            Mock -CommandName Remove-LocalUserProfile -MockWith { $true }
+            Mock -CommandName Remove-LocalUser -MockWith { $true }
+
+            $result = Remove-LocalUserProfileAndAccount -LocalUserName 'WhatIfProfile' -WhatIf
+
+            $result.ProfileDeleted | Should -BeFalse
+            $result.AccountDeleted | Should -BeFalse
+            Assert-MockCalled Remove-LocalUserProfile -Times 0
+            Assert-MockCalled Remove-LocalUser -Times 0
         }
     }
 

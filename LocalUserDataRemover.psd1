@@ -7,7 +7,7 @@
     Copyright         = '(c) OpenAI. All rights reserved.'
     Description       = 'PowerShell 5.1 cleanup for stale or oversized local user profiles.'
     PowerShellVersion = '5.1'
-    FunctionsToExport = @('Start-LocalUserDataRemoval')
+    FunctionsToExport = @('Start-LocalUserDataRemoval', 'Remove-LocalUserProfileAndAccount')
     CmdletsToExport   = @()
     VariablesToExport = @()
     AliasesToExport   = @()
