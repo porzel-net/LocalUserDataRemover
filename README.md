@@ -83,8 +83,12 @@ Start-LocalUserDataRemoval -InactivityDays 45 -MaxProfileSizeMB 750
 Write a log file:
 
 ```powershell
-Start-LocalUserDataRemoval -LogPath C:\Logs\LocalUserDataRemover.log -WhatIf
+Start-LocalUserDataRemoval -LogPath C:\logs\LocalUserDataRemover.log -WhatIf
 ```
+
+If you do not pass `-LogPath`, the module automatically writes to a local `logs` folder in the current working directory, for example:
+
+- `.\logs\LocalUserDataRemover-20260504-164500.log`
 
 ## Parameters
 

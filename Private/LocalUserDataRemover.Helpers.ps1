@@ -97,6 +97,34 @@ function Resolve-LocalUserDataRemoverAccountName {
     return $Sid
 }
 
+function Resolve-LocalUserDataRemoverLogPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $trimmed = $Path.Trim()
+
+    if ([System.IO.Path]::IsPathRooted($trimmed)) {
+        return [System.IO.Path]::GetFullPath($trimmed)
+    }
+
+    $basePath = (Get-Location).Path
+    return [System.IO.Path]::GetFullPath((Join-Path -Path $basePath -ChildPath $trimmed))
+}
+
+function Get-LocalUserDataRemoverDefaultLogPath {
+    [CmdletBinding()]
+    param()
+
+    $basePath = (Get-Location).Path
+    $logDirectory = Join-Path -Path $basePath -ChildPath 'logs'
+    $fileName = 'LocalUserDataRemover-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss')
+
+    return Join-Path -Path $logDirectory -ChildPath $fileName
+}
+
 function Get-LocalUserDataRemoverFolderSizeBytes {
     [CmdletBinding()]
     param(

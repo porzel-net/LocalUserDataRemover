@@ -116,6 +116,18 @@ InModuleScope LocalUserDataRemover {
             Test-LocalUserDataRemoverPathUnderRoot -Path '' -Root 'C:\Users' | Should -BeFalse
         }
 
+        It 'builds a default log path under the current location' {
+            Push-Location $TestDrive
+            try {
+                $path = Get-LocalUserDataRemoverDefaultLogPath
+
+                $path | Should -Match ([regex]::Escape((Join-Path -Path $TestDrive -ChildPath 'logs')))
+                $path | Should -Match 'LocalUserDataRemover-\d{8}-\d{6}\.log$'
+            } finally {
+                Pop-Location
+            }
+        }
+
         It 'detects paths under the configured root' {
             Test-LocalUserDataRemoverPathUnderRoot -Path 'C:\Users\TestUser' -Root 'C:\Users' | Should -BeTrue
             Test-LocalUserDataRemoverPathUnderRoot -Path 'C:\Users' -Root 'C:\Users' | Should -BeTrue
@@ -295,7 +307,9 @@ InModuleScope LocalUserDataRemover {
         It 'writes a formatted line when a log path is configured' {
             $logPath = Join-Path -Path $TestDrive -ChildPath 'cleanup.log'
 
-            Write-LocalUserDataRemoverLog -Message 'hello world' -LogPath $logPath -Level 'Summary'
+            $resolvedPath = Write-LocalUserDataRemoverLog -Message 'hello world' -LogPath $logPath -Level 'Summary'
+
+            $resolvedPath | Should -Be $logPath
 
             $content = Get-Content -LiteralPath $logPath -Raw
             $content | Should -Match '\[SUMMARY\]'
@@ -304,6 +318,18 @@ InModuleScope LocalUserDataRemover {
 
         It 'does nothing when no log path is configured' {
             { Write-LocalUserDataRemoverLog -Message 'ignored' -LogPath $null } | Should -Not -Throw
+        }
+
+        It 'resolves relative log paths against the current location' {
+            Push-Location $TestDrive
+            try {
+                $resolvedPath = Write-LocalUserDataRemoverLog -Message 'relative path' -LogPath 'relative.log' -Level 'Info'
+
+                $resolvedPath | Should -Be (Join-Path -Path $TestDrive -ChildPath 'relative.log')
+                Test-Path -LiteralPath (Join-Path -Path $TestDrive -ChildPath 'relative.log') | Should -BeTrue
+            } finally {
+                Pop-Location
+            }
         }
     }
 
@@ -336,6 +362,24 @@ InModuleScope LocalUserDataRemover {
     }
 
     Describe 'Start-LocalUserDataRemoval' {
+        It 'creates a log file automatically when no log path is provided' {
+            Push-Location $TestDrive
+            try {
+                Mock -CommandName Get-LocalUserProfileCandidates -MockWith { @() }
+
+                $result = Start-LocalUserDataRemoval -ProfileRoot 'C:\Users' -Confirm:$false
+
+                $result.ScannedCount | Should -Be 0
+                $logFiles = Get-ChildItem -Path (Join-Path -Path $TestDrive -ChildPath 'logs') -Filter '*.log'
+                $logFiles.Count | Should -Be 1
+                $logContent = Get-Content -LiteralPath $logFiles[0].FullName -Raw
+                $logContent | Should -Match 'Starting scan'
+                $logContent | Should -Match 'Finished scan'
+            } finally {
+                Pop-Location
+            }
+        }
+
         It 'deletes eligible profiles and writes the success log path' {
             $bothProfile = [LocalProfileCandidate]::new()
             $bothProfile.SID = 'S-1-5-21-300'
@@ -373,7 +417,10 @@ InModuleScope LocalUserDataRemover {
             $result.FailedCount | Should -Be 0
             $result.DeletedProfiles.Count | Should -Be 2
             Assert-MockCalled Remove-LocalUserProfile -Times 2
-            (Get-Content -LiteralPath $logPath -Raw) | Should -Match 'Deleted profile'
+            $logContent = Get-Content -LiteralPath $logPath -Raw
+            $logContent | Should -Match 'Starting scan'
+            $logContent | Should -Match 'Deleted profile'
+            $logContent | Should -Match 'Finished scan'
         }
 
         It 'scans, deletes, skips and reports totals' {

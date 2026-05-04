@@ -33,13 +33,22 @@ function Start-LocalUserDataRemoval {
     )
 
     $result = [CleanupResult]::new()
+    $effectiveLogPath = if ([string]::IsNullOrWhiteSpace($LogPath)) {
+        Get-LocalUserDataRemoverDefaultLogPath
+    } else {
+        $LogPath
+    }
 
-    Write-LocalUserDataRemoverLog -LogPath $LogPath -Level 'Info' -Message (
+    $effectiveLogPath = Write-LocalUserDataRemoverLog -LogPath $effectiveLogPath -Level 'Info' -Message (
         'Starting scan. Root={0}; InactivityDays={1}; MaxProfileSizeMB={2}' -f
         $options.ProfileRoot,
         $options.InactivityDays,
         [math]::Round($options.MaxProfileSizeBytes / 1MB, 2)
     )
+
+    if (-not [string]::IsNullOrWhiteSpace($effectiveLogPath)) {
+        Write-Verbose ('Logging to {0}' -f $effectiveLogPath)
+    }
 
     $profiles = Get-LocalUserProfileCandidates -ProfileRoot $options.ProfileRoot
 
@@ -59,7 +68,7 @@ function Start-LocalUserDataRemoval {
 
         if (-not $decision.ShouldDelete) {
             $result.AddSkipped($entry)
-            Write-LocalUserDataRemoverLog -LogPath $LogPath -Level 'Skip' -Message (
+            Write-LocalUserDataRemoverLog -LogPath $effectiveLogPath -Level 'Skip' -Message (
                 'Skipped profile {0} ({1}): {2}' -f $profile.LocalPath, $profile.UserName, ($decision.Reasons -join '; ')
             )
             continue
@@ -78,7 +87,7 @@ function Start-LocalUserDataRemoval {
                 Remove-LocalUserProfile -Profile $profile -ErrorAction Stop
                 $result.AddDeleted($entry)
 
-                Write-LocalUserDataRemoverLog -LogPath $LogPath -Level 'Delete' -Message (
+                Write-LocalUserDataRemoverLog -LogPath $effectiveLogPath -Level 'Delete' -Message (
                     'Deleted profile {0} ({1})' -f $profile.LocalPath, $profile.UserName
                 )
             } catch {
@@ -94,19 +103,19 @@ function Start-LocalUserDataRemoval {
 
                 $result.AddFailed($failureEntry)
 
-                Write-LocalUserDataRemoverLog -LogPath $LogPath -Level 'Error' -Message (
+                Write-LocalUserDataRemoverLog -LogPath $effectiveLogPath -Level 'Error' -Message (
                     'Failed to delete profile {0} ({1}): {2}' -f $profile.LocalPath, $profile.UserName, $_.Exception.Message
                 )
             }
         } else {
             $result.AddSkipped($entry)
-            Write-LocalUserDataRemoverLog -LogPath $LogPath -Level 'Skip' -Message (
+            Write-LocalUserDataRemoverLog -LogPath $effectiveLogPath -Level 'Skip' -Message (
                 'WhatIf prevented deletion of profile {0} ({1})' -f $profile.LocalPath, $profile.UserName
             )
         }
     }
 
-    Write-LocalUserDataRemoverLog -LogPath $LogPath -Level 'Summary' -Message (
+    Write-LocalUserDataRemoverLog -LogPath $effectiveLogPath -Level 'Summary' -Message (
         'Finished scan. Scanned={0}; Deleted={1}; Skipped={2}; Failed={3}' -f
         $result.ScannedCount,
         $result.DeletedCount,

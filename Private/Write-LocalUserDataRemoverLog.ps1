@@ -14,12 +14,20 @@ function Write-LocalUserDataRemoverLog {
         return
     }
 
-    $logDirectory = Split-Path -Path $LogPath -Parent
+    $resolvedLogPath = Resolve-LocalUserDataRemoverLogPath -Path $LogPath
+    $logDirectory = Split-Path -Path $resolvedLogPath -Parent
 
     if (-not [string]::IsNullOrWhiteSpace($logDirectory) -and -not (Test-Path -LiteralPath $logDirectory)) {
-        New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+        New-Item -ItemType Directory -LiteralPath $logDirectory -Force | Out-Null
     }
 
     $line = '{0} [{1}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level.ToUpperInvariant(), $Message
-    Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+
+    if (-not (Test-Path -LiteralPath $resolvedLogPath)) {
+        New-Item -ItemType File -LiteralPath $resolvedLogPath -Force | Out-Null
+    }
+
+    Add-Content -LiteralPath $resolvedLogPath -Value $line -Encoding UTF8
+
+    return $resolvedLogPath
 }
