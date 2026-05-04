@@ -13,6 +13,39 @@ The module scans `C:\Users` and removes local user profiles when one of these co
 
 Profiles are only removed through the Windows profile management API, not by deleting folders directly.
 
+### What `Start-LocalUserDataRemoval` Deletes
+
+This command removes the local user profile only.
+
+It deletes the `Win32_UserProfile` entry for the profile. That lets Windows remove the profile state it manages for that user, including the profile folder under `C:\Users` when the API performs the deletion.
+
+It does not delete:
+
+- the AD account
+- the local Windows account object
+- other users' data
+- system profiles such as `Default`, `Public`, `Administrator`, or `WDAGUtilityAccount`
+
+The command skips profiles that are:
+
+- currently loaded
+- marked as special
+- outside the configured profile root
+- excluded by name or path
+
+### What `Remove-LocalUserProfileAndAccount` Deletes
+
+This command is meant for shared machines such as kiosks or download stations.
+
+It deletes, in order:
+
+1. the matching local user profile
+2. the local Windows account itself
+
+The profile deletion uses `Win32_UserProfile` first. After that, the command removes the local account with `Remove-LocalUser`.
+
+If the profile cannot be deleted, the account is not removed.
+
 ## Safety Rules
 
 The cleanup logic intentionally avoids removing profiles that are likely in active use or are system-managed:
@@ -23,7 +56,7 @@ The cleanup logic intentionally avoids removing profiles that are likely in acti
 - known built-in profile names are excluded by default
 - the command supports `-WhatIf` and `-Confirm`
 
-This means a user can log in again after the profile has been removed. The account itself is not deleted.
+This means a user can log in again after the profile has been removed when only `Start-LocalUserDataRemoval` is used. The account itself is not deleted by that command.
 
 For a kiosk, download station, or similar shared machine, there is a separate command that deletes a named local user account and its profile in one step.
 
@@ -117,6 +150,15 @@ If you do not pass `-LogPath`, the module automatically writes to a local `logs`
 - `-LogPath`
   - optional log file path
 
+### Files and objects removed
+
+Depending on the command, the module removes:
+
+- the profile directory under `C:\Users\<name>`
+- the profile registration in Windows via `Win32_UserProfile`
+- the user-specific registry hive and profile state managed by Windows
+- optionally, the local Windows account object
+
 ### `Remove-LocalUserProfileAndAccount`
 
 - `-LocalUserName`
@@ -128,6 +170,15 @@ If you do not pass `-LogPath`, the module automatically writes to a local `logs`
   - optional log file path
 
 This command resolves the local account with `Get-LocalUser`, deletes the matching `Win32_UserProfile`, and then removes the local account with `Remove-LocalUser`.
+
+Deletion order:
+
+1. resolve the local account to a SID
+2. locate the profile via `Win32_UserProfile`
+3. delete the profile
+4. delete the local account
+
+If `-WhatIf` is used, nothing is deleted.
 
 ## Output
 
