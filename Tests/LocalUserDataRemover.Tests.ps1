@@ -65,6 +65,41 @@ InModuleScope LocalUserDataRemover {
 
             return $profile
         }
+
+        function New-LocalUserDataRemoverCandidateStub {
+            param(
+                [Parameter(Mandatory)]
+                [string]$Sid,
+
+                [Parameter(Mandatory)]
+                [string]$LocalPath,
+
+                [AllowNull()]
+                [object]$SourceInstance = $null,
+
+                [AllowNull()]
+                [datetime]$LastUseTime = $null,
+
+                [bool]$Loaded = $false,
+
+                [bool]$Special = $false,
+
+                [long]$SizeBytes = 0
+            )
+
+            $candidate = [LocalProfileCandidate]::new()
+            $candidate.SID = $Sid
+            $candidate.LocalPath = $LocalPath
+            $candidate.ProfileFolderName = Split-Path -Path $LocalPath -Leaf
+            $candidate.UserName = Split-Path -Path $LocalPath -Leaf
+            $candidate.LastUseTime = if ($null -eq $LastUseTime) { [datetime]::MinValue } else { $LastUseTime }
+            $candidate.Loaded = $Loaded
+            $candidate.Special = $Special
+            $candidate.SizeBytes = $SizeBytes
+            $candidate.SourceInstance = $SourceInstance
+
+            return $candidate
+        }
     }
 
     Describe 'CleanupOptions' {
@@ -428,7 +463,8 @@ InModuleScope LocalUserDataRemover {
 
     Describe 'Remove-LocalUserProfileAndAccount' {
         It 'deletes the matching profile and local account' {
-            $profile = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-500' -LocalPath 'C:\Users\DownloadStationUser' -LastUseTime '20240422093000.000000+000' -Size 12345
+            $sourceInstance = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-500' -LocalPath 'C:\Users\DownloadStationUser' -LastUseTime '20240422093000.000000+000' -Size 12345
+            $profile = New-LocalUserDataRemoverCandidateStub -Sid 'S-1-5-21-500' -LocalPath 'C:\Users\DownloadStationUser' -SourceInstance $sourceInstance -LastUseTime (Get-Date).AddDays(-30) -SizeBytes 12345
 
             Mock -CommandName Get-LocalUser -MockWith {
                 [pscustomobject]@{
@@ -459,6 +495,7 @@ InModuleScope LocalUserDataRemover {
             }
 
             Mock -CommandName Get-LocalUserProfileCandidates -MockWith { @() }
+            Mock -CommandName Remove-LocalUserProfile -MockWith { $true }
             Mock -CommandName Remove-LocalUser -MockWith { $true }
 
             $result = Remove-LocalUserProfileAndAccount -LocalUserName 'TempUser' -Confirm:$false
@@ -506,7 +543,8 @@ InModuleScope LocalUserDataRemover {
         }
 
         It 'does not delete the account when the profile removal fails' {
-            $profile = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-504' -LocalPath 'C:\Users\BrokenUser'
+            $sourceInstance = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-504' -LocalPath 'C:\Users\BrokenUser'
+            $profile = New-LocalUserDataRemoverCandidateStub -Sid 'S-1-5-21-504' -LocalPath 'C:\Users\BrokenUser' -SourceInstance $sourceInstance -LastUseTime (Get-Date).AddDays(-30)
 
             Mock -CommandName Get-LocalUser -MockWith {
                 [pscustomobject]@{
@@ -543,7 +581,8 @@ InModuleScope LocalUserDataRemover {
         }
 
         It 'does not delete anything when WhatIf is used and a profile exists' {
-            $profile = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-505' -LocalPath 'C:\Users\WhatIfProfile'
+            $sourceInstance = New-LocalUserDataRemoverProfileStub -Sid 'S-1-5-21-505' -LocalPath 'C:\Users\WhatIfProfile'
+            $profile = New-LocalUserDataRemoverCandidateStub -Sid 'S-1-5-21-505' -LocalPath 'C:\Users\WhatIfProfile' -SourceInstance $sourceInstance -LastUseTime (Get-Date).AddDays(-30)
 
             Mock -CommandName Get-LocalUser -MockWith {
                 [pscustomobject]@{
